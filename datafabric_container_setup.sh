@@ -2,6 +2,10 @@
 #set -x
 IMAGE="maprtech/edf-seed-container:latest"
 INTERFACE="en0"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
 usage()
 {
@@ -17,7 +21,7 @@ usage()
    echo
 }
 
-os_name=$(. /etc/os-release && echo "$ID") > /dev/null 2>&1
+os_name=$(. /etc/os-release  2> /dev/null && echo "$ID") &> /dev/null 
 
 install_docker_linux()
 {
@@ -70,22 +74,25 @@ fi
 
 #checking if required memory is present or not
 os_vers=`uname -s` > /dev/null 2>&1
+memory_requirement=1
 if [ "$os_vers" == "Darwin" ]; then
      memory_avilable_mac=$(system_profiler SPHardwareDataType | grep "Memory" | awk '{print $2}')  &>/dev/null
        if  [ $memory_avilable_mac -lt 32 ] ; then
-           echo "RAM needed to run seed node is 32 GB or more on MACBook."
-           echo "Looks like sufficent RAM is not available on this machine"
-           echo "Please try to spin up seed node on a machine which has sufficent memory"
+           echo -e "${GREEN}RAM NEEDED \t :\t 32 GB"
+           echo -e "${RED}RAM AVILABLE \t :\t $memory_avilable_mac  GB"
+           echo -e "${RED}Please try to spin up seed node on client having sufficient memory${NC}"
+           memory_requirement=0
            exit
        fi
 fi
 if [ "$os_vers" == "Linux" ]; then
        memory_avilable_linux=$(cat /proc/meminfo | grep MemTotal | awk '{print $2}')  &>/dev/null 
-         if  [ $memory_avilable_linux -lt 25165824 ]; then
-             echo "RAM needed to run seed node is 24 GB or more on linux nodes."
-             echo "Looks like sufficent RAM is not available on this machine"
-             echo "Please try to spin up seed node on a machine which has sufficent memory"
-             exit
+        if  [ $memory_avilable_linux -lt 25165824 ]; then
+            echo -e "${GREEN}RAM NEEDED \t :\t 25165824"
+            echo -e "${RED}RAM AVILABLE \t :\t $memory_avilable_linux"
+            echo -e "${RED}Please try to spin up seed node on client having sufficient memory${NC}"
+            memory_requirement=0
+            exit
          fi
 fi
 
@@ -93,8 +100,8 @@ fi
 docker info > /dev/null 2>&1
 if [ $? != 0 ] ; then
    if [ "$os_vers" == "Darwin" ];then
-    echo "Docker is not installed/not-running on the MacBook where this script is ran.Please install/start docker to proceed forward"
-    echo "Reference link to install : https://docs.docker.com/desktop/install/mac-install/"
+    echo -e "${RED}Docker is not installed/not-running on the MacBook where this script is ran.Please install/start docker to proceed forward"
+    echo -e "${GREEN}Reference link to install : https://docs.docker.com/desktop/install/mac-install/${NC}"
     exit
    elif [ "$os_vers" == "Linux" ]; then
 	 install_docker_linux
@@ -102,10 +109,13 @@ if [ $? != 0 ] ; then
 fi
 
 #check connectivity to docker hub
+docker_running=1
 docker run hello-world  > /dev/null 2>&1
 if [ $? != 0 ]; then
-    echo "Docker is installed on the system but we are not able to pull images from docker hub"
-    echo "Please check internet connectivity or if the machine is behind a proxy and take appropriate action accordingly"
+    echo -e "${RED}Docker is not running on the system"
+    echo -e "${RED}Docker is installed/running on the system but we are not able to pull images from docker hub"
+    echo -e "${RED}Please check internet connectivity or if the machine is behind a proxy and take appropriate action accordingly${NC}"
+    docker_running=0
     exit
 fi
 
@@ -129,11 +139,12 @@ if [ "$os_vers" == "Linux" ]; then
    fi
 fi
 
+
 if [ $lsof_installed == 1 ];then
     #check if ports used by datafabric is already used by some other process
     docker ps -a | grep edf-seed-container > /dev/null 2>&1
     if [ $? != 0 ]; then
-         seednodeports='7221 5660 5692 5724 5756 8443 8188 7222 5181'
+         seednodeports='7221 5660 5692 5724 5756 8443 8188 8080 7222 5181'
          pc=0
          for port in $seednodeports
             do
@@ -145,14 +156,21 @@ if [ $lsof_installed == 1 ];then
               fi
             done
        if [ $pc -eq 1 ]; then
-          echo "it seems to be that some existing application using the required ports so please make sure to clean them up before attempting again"
+          echo -e "${RED}it seems to be that some existing application using the required ports so please make sure to clean them up before attempting again${NC}"
           exit 1
        fi
     fi
 else
-   echo "lsof command is not installed on the system"
-   echo "We will not be able to check if ports 7221 5660 5692 5724 5756 8443 8188 7222 5181 needed by Bootstrap node are being used by any other process/application"
-   echo "If above mentioned ports are in use then the container will fail to start"
+   echo -e "${YELLOW}lsof command is not installed on the system"
+   echo -e "${YELLOW}We will not be able to check if ports 7221 5660 5692 5724 5756 8443 8188 8080 7222 5181 needed by Bootstrap node are being used by any other process/application"
+   echo -e "${YELLOW}If above mentioned ports are in use then the container will fail to start${NC}"
+fi
+
+if [ $memory_requirement == 1 ]  && [ $docker_running == 1 ] && [ $lsof_installed == 1 ]; then
+     echo -e "\t\t${GREEN}RAM NEEDED \t :\t AVAILABLE"
+     echo -e "\t\t${GREEN}DOCKER STATUS \t :\t RUNNING"
+     echo -e "\t\t${GREEN}PORTS NEEDED \t :\t AVAILABLE"
+     echo -e "\t\tPROCEEDING FORWARD WITH DEPLOYING SEED NODE${NC}"
 fi
 
 
@@ -294,10 +312,7 @@ else
         # There is no instance of dev-sandbox-container running. Start a fresh container and configure client.
         runMaprImage
 
-        sudo /opt/mapr/server/configure.sh -c -C ${hostName}  -N ${clusterName} > /dev/null 2>&1
         sudo sed -i  '/'${hostName}'/d' /etc/hosts &>/dev/null
-        sudo  sh -c "echo  \"${IP}      ${hostName}  ${clusterName}\" >> /etc/hosts"
-        sudo sed -i '' '/'${hostName}'/d' /opt/mapr/conf/mapr-clusters.conf &>/dev/null
         
         os_vers=`uname -s` > /dev/null 2>&1 
         
